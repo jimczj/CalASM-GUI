@@ -29,17 +29,6 @@
     python calASM_gui.py
     ```
 
-### 方式二：打包为 Windows 可执行文件 (.exe)
-
-如果你希望生成一个独立的 `.exe` 软件发送给他人使用：
-
-1.  确保已安装 `pyinstaller`（包含在 `requirements.txt` 中）。
-2.  在终端执行打包命令：
-    ```bash
-    pyinstaller --noconsole --onefile --name="异动分析工具" calASM_gui.py
-    ```
-3.  打包完成后，在 `dist/` 目录下即可找到 `异动分析工具.exe`。
-
 ## 📖 使用说明
 
 1.  **输入股票**：在界面上方的文本框中输入股票列表。
