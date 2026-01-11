@@ -182,7 +182,7 @@ try:
 except:
     plt.style.use('ggplot')
 
-matplotlib.rcParams['font.family'] = ['Times New Roman', 'SimSun', 'SimHei']
+matplotlib.rcParams['font.family'] = ['Heiti TC']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 # ================= 表格绘图超参数 =================
