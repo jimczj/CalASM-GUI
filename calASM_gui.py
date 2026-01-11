@@ -9,7 +9,11 @@ import math
 from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 import time
 import os
+import matplotlib
+matplotlib.use('Agg') # 强制使用非交互式后端，修复多线程报错
 import matplotlib.pyplot as plt
+import socket
+socket.setdefaulttimeout(15) # 设置全局网络超时时间(秒)
 
 # ================= 核心逻辑 (复用自原脚本) =================
 
@@ -176,14 +180,45 @@ def analyze_period_combined(df, future_dates, days, threshold, limit_ratio):
 
 # ================= 绘图逻辑 =================
 import matplotlib
+import matplotlib.font_manager as fm
 
-try:
-    plt.style.use('seaborn-v0_8-whitegrid')
-except:
-    plt.style.use('ggplot')
+def configure_plot_style():
+    try:
+        plt.style.use('seaborn-v0_8-whitegrid')
+    except:
+        plt.style.use('ggplot')
 
-matplotlib.rcParams['font.family'] = ['Times New Roman', 'SimSun', 'SimHei']
-matplotlib.rcParams['axes.unicode_minus'] = False
+    # 自动探测系统支持的中文字体
+    # 优先级: 微软雅黑 > 黑体 > 宋体 > 其他平台常见字体
+    candidate_fonts = [
+        'SimSun', 'SimHei','Microsoft YaHei', 'KaiTi',  # Windows
+        'PingFang SC', 'Heiti TC', 'Hiragino Sans GB', 'Arial Unicode MS',  # Mac
+        'WenQuanYi Micro Hei', 'Droid Sans Fallback', 'Noto Sans CJK SC'  # Linux
+    ]
+    
+    # 获取系统所有可用字体名称集合
+    try:
+        system_font_names = set([f.name for f in fm.fontManager.ttflist])
+    except:
+        system_font_names = set()
+    
+    # 筛选出系统中存在的字体
+    found_fonts = []
+    for f in candidate_fonts:
+        if f in system_font_names:
+            found_fonts.append(f)
+            
+    # 默认回退列表 (即使检测不到也加上，作为最后防线)
+    fallback_fonts = ['SimHei', 'SimSun', 'Microsoft YaHei']
+    
+    # 最终字体列表：优先 Times New Roman (英文/数字)，然后是检测到的可用中文字体
+    # Matplotlib 会依次尝试列表中的字体来渲染字符
+    final_font_family = ['Times New Roman'] + found_fonts + fallback_fonts
+    
+    matplotlib.rcParams['font.family'] = final_font_family
+    matplotlib.rcParams['axes.unicode_minus'] = False
+
+configure_plot_style()
 
 # ================= 表格绘图超参数 =================
 TABLE_TITLE_FONT_SIZE = 24
@@ -207,14 +242,18 @@ def plot_summary_overview(summary_data, title_prefix):
     for item in summary_data:
         new_item = item.copy()
         if "_meta_dates" in new_item: del new_item["_meta_dates"]
+        # 数据列顺序：名称, 类型, 现价, 当日偏离, T1...
         clean_data.append([
-            new_item['名称'], new_item['现价'], new_item['T_偏离'],
-            new_item['T1_触线'], new_item['T1_空间'], new_item['T1_板'],
-            new_item['T2_触线'], new_item['T2_空间'], new_item['T2_板'],
-            new_item['T3_触线'], new_item['T3_空间'], new_item['T3_板']
+            new_item.get('名称', '-'),
+            new_item.get('异动类型', '-'),
+            new_item.get('现价', '-'),
+            new_item.get('T_偏离', '-'),
+            new_item.get('T1_触线', '-'), new_item.get('T1_空间', '-'), new_item.get('T1_板', '-'),
+            new_item.get('T2_触线', '-'), new_item.get('T2_空间', '-'), new_item.get('T2_板', '-'),
+            new_item.get('T3_触线', '-'), new_item.get('T3_空间', '-'), new_item.get('T3_板', '-')
         ])
     
-    n_cols = 12 
+    n_cols = 13
     n_rows = len(clean_data)
     fig_width = TABLE_FIG_WIDTH
     fig_height = max(1.5, n_rows * TABLE_FIG_HEIGHT_PER_ROW + TABLE_FIG_HEIGHT_BASE)
@@ -226,7 +265,7 @@ def plot_summary_overview(summary_data, title_prefix):
     row_colors = ['#ffffff', '#f2f2f2']
     d1, d2, d3 = meta_dates
     headers = [
-        "名称", "现价", "当前\n偏离", 
+        "名称", "异动\n类型", "现价", "当日\n偏离", 
         f"{d1}\n触线价", f"{d1}\n允许涨幅", f"{d1}\n连板",
         f"{d2}\n触线价", f"{d2}\n允许涨幅", f"{d2}\n连板",
         f"{d3}\n触线价", f"{d3}\n允许涨幅", f"{d3}\n连板"
@@ -251,15 +290,20 @@ def plot_summary_overview(summary_data, title_prefix):
             cell.set_facecolor(row_colors[data_row_idx % 2])
             text_val = cell.get_text().get_text()
             
-            if col == 0: cell.set_text_props(weight='bold')
-            if col == 2:
+            # col 0: 名称, col 1: 类型
+            if col in [0, 1]: cell.set_text_props(weight='bold')
+            
+            # col 3: 当日偏离 (带百分号)
+            if col == 3:
                 try:
                     val = float(text_val.replace('%', ''))
                     rounded_val = round_half_up(val, 2)
-                    cell.get_text().set_text(f"{rounded_val:.2f}") 
+                    cell.get_text().set_text(f"{rounded_val:.2f}%") 
                     if abs(val) > 80: cell.set_text_props(color='red', weight='bold')
                 except: pass
-            if col in [4, 7, 10]:
+            
+            # col 5, 8, 11: 允许涨幅 (带百分号)
+            if col in [5, 8, 11]:
                 if "触发" in text_val or "已触发" in text_val:
                     cell.set_text_props(color='white', weight='bold')
                     cell.set_facecolor('#c0392b')
@@ -267,11 +311,13 @@ def plot_summary_overview(summary_data, title_prefix):
                     try:
                         val = float(text_val.replace('%', ''))
                         rounded_val = round_half_up(val, 2)
-                        cell.get_text().set_text(f"{rounded_val:.2f}") 
+                        cell.get_text().set_text(f"{rounded_val:.2f}%") 
                         if val < 10.0: cell.set_text_props(color='red', weight='bold')
                         elif val < 20.0: cell.set_text_props(color='#e67e22', weight='bold') 
                     except: pass
-            if col in [5, 8, 11]:
+            
+            # col 6, 9, 12: 允许连板
+            if col in [6, 9, 12]:
                 try:
                     val = int(text_val)
                     if val > 0:
@@ -363,6 +409,10 @@ class AnalysisApp:
         self.root.title("异动分析计算器 v1.0")
         self.root.geometry("1000x700")
         
+        # 运行状态标志
+        self.is_running = False
+        self.stop_requested = False
+        
         # 顶部输入区域
         top_frame = tk.Frame(root, pady=10)
         top_frame.pack(fill=tk.X, padx=10)
@@ -400,7 +450,14 @@ class AnalysisApp:
         self.root.update()
 
     def start_analysis(self):
-        self.run_btn.config(state='disabled', text="运行中...")
+        # 如果正在运行，则视为停止请求
+        if self.is_running:
+            if not self.stop_requested:
+                 self.stop_requested = True
+                 self.run_btn.config(text="正在中止...", state='disabled')
+                 self.log("\n>>> 用户请求中止...")
+            return
+
         self.output_text.config(state='normal')
         self.output_text.delete(1.0, tk.END)
         self.output_text.config(state='disabled')
@@ -422,55 +479,112 @@ class AnalysisApp:
             self.run_btn.config(state='normal', text="开始分析")
             return
 
+        # 设置运行状态
+        self.is_running = True
+        self.stop_requested = False
+        # 按钮变为红色停止按钮
+        self.run_btn.config(state='normal', text="停止 / 刷新", bg="#e74c3c")
+
         # 启动线程
         threading.Thread(target=self.run_process, args=(stock_list,), daemon=True).start()
 
     def run_process(self, stock_list):
         summary_list_10 = []
         summary_list_30 = []
-        
+        summary_list_combined = [] # 综合最严异动列表
+
         target_date_str = datetime.now().strftime("%Y%m%d")
         self.log(f"分析日期: {target_date_str}")
         self.log(f"共 {len(stock_list)} 支股票待处理...")
         self.log("-" * 40)
 
+        def parse_space(val_str):
+            # 解析剩余空间，返回float用于比较
+            # "已触发" -> -9999 (优先级最高，最严)
+            if not val_str: return 9999.0
+            s_val = str(val_str)
+            if "触发" in s_val: return -9999.0
+            try:
+                return float(s_val.replace('%', ''))
+            except:
+                return 9999.0
+
         for code, name in stock_list:
+            # 检查中止标志
+            if self.stop_requested:
+                self.log(f"\n>>> 检测到中止信号，停止后续任务。")
+                break
+
             try:
                 self.log(f"正在处理: {code} {name} ...")
                 s10, s30 = self.process_one_stock(code, name, target_date_str)
+                
+                # 收集分表数据
                 if s10: summary_list_10.append(s10)
                 if s30: summary_list_30.append(s30)
+
+                # 计算综合极小值 (取T+1空间较小者)
+                if s10 and s30:
+                    v10 = parse_space(s10.get('T1_空间'))
+                    v30 = parse_space(s30.get('T1_空间'))
+                    if v10 <= v30:
+                        summary_list_combined.append(s10)
+                    else:
+                        summary_list_combined.append(s30)
+                elif s10:
+                    summary_list_combined.append(s10)
+                elif s30:
+                    summary_list_combined.append(s30)
+
                 time.sleep(0.5) 
+            except socket.timeout:
+                self.log(f"❌ 处理出错: 网络连接超时，请检查网络或重试。")
             except Exception as e:
-                self.log(f"处理出错: {str(e)}")
+                err_msg = str(e)
+                if "timed out" in err_msg.lower():
+                     err_msg = "网络请求超时"
+                self.log(f"❌ 处理出错: {err_msg}")
 
-        self.log("\n" + "="*40)
-        self.log("分析完成。生成汇总表...")
-        
-        # 显示 10日异动汇总
-        if summary_list_10:
-            self.print_summary_table("10日严重异动 (100%偏离)", summary_list_10)
-        
-        if summary_list_30:
-            self.print_summary_table("30日严重异动 (200%偏离)", summary_list_30)
+        if not self.stop_requested:
+            self.log("\n" + "="*40)
+            self.log("分析完成。生成汇总表...")
+            
+            # 1. 显示 10日异动汇总
+            if summary_list_10:
+                self.print_summary_table("10日严重异动(100%偏离)", summary_list_10)
+            
+            # 2. 显示 30日异动汇总
+            if summary_list_30:
+                self.print_summary_table("30日严重异动(200%偏离)", summary_list_30)
+            
+            # 3. 显示 综合最严异动汇总
+            if summary_list_combined:
+                self.print_summary_table("10日30日异动分析总览(取T1极小)", summary_list_combined)
+            else:
+                self.log("未生成任何有效异动数据。")
 
-        self.root.after(0, lambda: self.run_btn.config(state='normal', text="开始分析"))
-        messagebox.showinfo("完成", "分析已完成！")
+            messagebox.showinfo("完成", "分析已完成！")
+        else:
+             self.log("\n>>> 任务已手动中止。")
+
+        self.is_running = False
+        self.stop_requested = False
+        self.root.after(0, lambda: self.run_btn.config(state='normal', text="开始分析", bg="#007acc"))
 
     def print_summary_table(self, title, summary_data):
         if not summary_data: return
         
-        # 提取用于显示的列
-        headers = ["名称", "现价", "T_偏离", "T1_板", "T1_空间", "T1_触线", "T2_板", "T2_空间", "T3_板", "T3_空间"]
+        # 提取用于显示的列 (文本日志)
+        headers = ["名称", "异动类型", "现价", "T_偏离", "T1_板", "T1_空间", "T1_触线", "T2_板", "T2_空间", "T3_板", "T3_空间"]
         
         # 构建 DataFrame 以利用 pandas 的格式化
         rows = []
         for item in summary_data:
             row = [
-                item['名称'], item['现价'], item['T_偏离'],
-                item['T1_板'], item['T1_空间'], item['T1_触线'],
-                item['T2_板'], item['T2_空间'],
-                item['T3_板'], item['T3_空间']
+                item.get('名称', '-'), item.get('异动类型', '-'), item.get('现价', '-'), item.get('T_偏离', '-'),
+                item.get('T1_板', '-'), item.get('T1_空间', '-'), item.get('T1_触线', '-'),
+                item.get('T2_板', '-'), item.get('T2_空间', '-'),
+                item.get('T3_板', '-'), item.get('T3_空间', '-')
             ]
             rows.append(row)
             
@@ -561,7 +675,7 @@ class AnalysisApp:
         df_10 = analyze_period_combined(merged, future_dates, 10, 100.0, limit_ratio)
         df_30 = analyze_period_combined(merged, future_dates, 30, 200.0, limit_ratio)
 
-        def extract_summary(res_df):
+        def extract_summary(res_df, type_name):
             row_map = {}
             for idx, row in res_df.iterrows():
                 if row['类型'] == '今日' or row['日期'] == last_date_str:
@@ -589,6 +703,7 @@ class AnalysisApp:
             return {
                 "_meta_dates": (date_t1, date_t2, date_t3),
                 "名称": name,
+                "异动类型": type_name,
                 "现价": f"{current_price:.2f}",
                 "T_偏离": t_row.get("区间偏离", "-"),
                 "T1_触线": t1_row.get("触线价格", "-"),
@@ -608,7 +723,7 @@ class AnalysisApp:
              plot_result_table(df_10, f"{title_base}-10日(100%)")
              plot_result_table(df_30, f"{title_base}-30日(200%)")
 
-        return extract_summary(df_10), extract_summary(df_30)
+        return extract_summary(df_10, "10日"), extract_summary(df_30, "30日")
 
 if __name__ == "__main__":
     if hasattr(sys, '_MEIPASS'):
